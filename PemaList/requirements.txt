@@ -1,0 +1,4 @@
+flask
+pandas
+python-docx
+gunicorn

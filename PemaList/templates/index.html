@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>牌位資料處理系統</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .upload-section {
+            text-align: center;
+            margin: 20px 0;
+            padding: 20px;
+            border: 2px dashed #ccc;
+            border-radius: 4px;
+        }
+        .button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 0;
+        }
+        .button:hover {
+            background-color: #45a049;
+        }
+        #status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .success {
+            background-color: #dff0d8;
+            color: #3c763d;
+        }
+        .error {
+            background-color: #f2dede;
+            color: #a94442;
+        }
+        .download-section {
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            display: none;
+        }
+        .download-link {
+            display: block;
+            margin: 10px 0;
+            padding: 8px 15px;
+            background-color: #007bff;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            text-align: center;
+        }
+        .download-link:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>牌位資料處理系統</h1>
+        <div class="upload-section">
+            <h2>請上傳 Excel 檔案</h2>
+            <input type="file" id="excelFile" accept=".xlsx, .xls" />
+            <button class="button" onclick="uploadFile()">處理檔案</button>
+        </div>
+        <div id="status"></div>
+        <div id="downloadSection" class="download-section">
+            <h3>下載檔案</h3>
+            <div id="downloadLinks"></div>
+        </div>
+    </div>
+
+    <script>
+        async function uploadFile() {
+            const fileInput = document.getElementById('excelFile');
+            const statusDiv = document.getElementById('status');
+            const downloadSection = document.getElementById('downloadSection');
+            const downloadLinks = document.getElementById('downloadLinks');
+
+            if (!fileInput.files.length) {
+                statusDiv.className = 'error';
+                statusDiv.textContent = '請選擇檔案';
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+
+            try {
+                statusDiv.className = '';
+                statusDiv.textContent = '處理中...';
+                downloadSection.style.display = 'none';
+
+                const response = await fetch('/process_excel', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    statusDiv.className = 'success';
+                    statusDiv.textContent = '檔案處理完成！請下載生成的檔案。';
+
+                    // 顯示下載區域
+                    downloadSection.style.display = 'block';
+                    downloadLinks.innerHTML = '';
+
+                    // 添加下載連結
+                    Object.entries(result.files).forEach(([key, path]) => {
+                        const filename = path.split('/').pop();
+                        const link = document.createElement('a');
+                        link.href = `/download/${filename}`;
+                        link.className = 'download-link';
+                        link.textContent = {
+                            'xiazai': '下載消災牌位',
+                            'chaojian': '下載超薦牌位',
+                            'gongde': '下載功德主名單'
+                        }[key];
+                        downloadLinks.appendChild(link);
+                    });
+                } else {
+                    throw new Error('處理失敗');
+                }
+            } catch (error) {
+                statusDiv.className = 'error';
+                statusDiv.textContent = '處理過程發生錯誤：' + error.message;
+                downloadSection.style.display = 'none';
+            }
+        }
+    </script>
+</body>
+</html>
