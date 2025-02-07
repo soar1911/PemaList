@@ -154,41 +154,63 @@ def index():
 @app.route('/process_excel', methods=['POST'])
 def process_excel():
     try:
+        # 增加日誌輸出
+        app.logger.info('開始處理上傳檔案')
+        
         # 確保輸出目錄存在
         if not os.path.exists(OUTPUT_DIR):
             os.makedirs(OUTPUT_DIR)
+            app.logger.info('創建輸出目錄')
 
         if 'file' not in request.files:
+            app.logger.error('沒有檔案')
             return jsonify({'error': '沒有檔案'}), 400
 
         file = request.files['file']
         if file.filename == '':
+            app.logger.error('沒有選擇檔案')
             return jsonify({'error': '沒有選擇檔案'}), 400
 
         # 讀取Excel檔案
-        df = pd.read_excel(file)
+        try:
+            app.logger.info('開始讀取 Excel 檔案')
+            df = pd.read_excel(file)
+            app.logger.info('Excel 檔案讀取完成')
+        except Exception as e:
+            app.logger.error(f'Excel 讀取失敗: {str(e)}')
+            return jsonify({'error': f'Excel 讀取失敗: {str(e)}'}), 500
 
         # 檢查必要欄位
         required_columns = ['姓名', 'Email', '行動電話', '祈福牌位(隨喜)', '超薦牌位(隨喜)', '參贊功德主']
         missing_columns = [col for col in required_columns if col not in df.columns]
 
         if missing_columns:
+            app.logger.error(f'缺少欄位：{", ".join(missing_columns)}')
             return jsonify({'error': f'缺少欄位：{", ".join(missing_columns)}'}), 400
 
         # 處理並創建Word檔案
-        file_paths = create_word_files(df)
+        try:
+            app.logger.info('開始創建 Word 檔案')
+            file_paths = create_word_files(df)
+            app.logger.info('Word 檔案創建完成')
+        except Exception as e:
+            app.logger.error(f'Word 檔案創建失敗: {str(e)}')
+            return jsonify({'error': f'Word 檔案創建失敗: {str(e)}'}), 500
 
         # 返回檔案名稱（不是完整路徑）
-        return jsonify({
+        response_data = {
             'message': '處理完成',
             'files': {
                 'xiazai': os.path.basename(file_paths['消災牌位']),
                 'chaojian': os.path.basename(file_paths['超薦牌位']),
                 'gongde': os.path.basename(file_paths['功德主'])
             }
-        }), 200
+        }
+        app.logger.info('處理完成，返回結果')
+        return jsonify(response_data), 200
 
     except Exception as e:
+        app.logger.error(f'處理過程發生錯誤：{str(e)}')
         return jsonify({'error': str(e)}), 500
 
 @app.route('/download/<filename>')
@@ -210,4 +232,4 @@ def download_file(filename):
         return str(e), 400
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=33080, debug=True)
