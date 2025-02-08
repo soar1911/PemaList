@@ -21,6 +21,27 @@
         h1 {
             color: #333;
             text-align: center;
+            margin-bottom: 30px;
+        }
+        .instructions {
+            background-color: #e9f5ff;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 25px;
+            border-left: 4px solid #007bff;
+        }
+        .instructions h2 {
+            color: #0056b3;
+            margin-top: 0;
+            font-size: 1.2em;
+        }
+        .instructions ul {
+            margin: 10px 0;
+            padding-left: 25px;
+        }
+        .instructions li {
+            margin-bottom: 8px;
+            line-height: 1.5;
         }
         .upload-section {
             text-align: center;
@@ -28,66 +49,115 @@
             padding: 20px;
             border: 2px dashed #ccc;
             border-radius: 4px;
+            background-color: #fafafa;
         }
         .button {
             background-color: #4CAF50;
             color: white;
-            padding: 10px 20px;
+            padding: 12px 24px;
             border: none;
             border-radius: 4px;
             cursor: pointer;
             font-size: 16px;
-            margin: 10px 0;
+            margin: 15px 0;
+            transition: background-color 0.3s;
         }
         .button:hover {
             background-color: #45a049;
         }
         #status {
             margin-top: 20px;
-            padding: 10px;
+            padding: 15px;
             border-radius: 4px;
+            text-align: center;
         }
         .success {
             background-color: #dff0d8;
             color: #3c763d;
+            border: 1px solid #d6e9c6;
         }
         .error {
             background-color: #f2dede;
             color: #a94442;
+            border: 1px solid #ebccd1;
         }
         .download-section {
             margin-top: 20px;
-            padding: 15px;
+            padding: 20px;
             border: 1px solid #ddd;
             border-radius: 4px;
             display: none;
+            background-color: #f8f9fa;
+        }
+        .download-section h3 {
+            color: #333;
+            margin-top: 0;
+            text-align: center;
         }
         .download-link {
             display: block;
-            margin: 10px 0;
-            padding: 8px 15px;
+            margin: 12px 0;
+            padding: 10px 20px;
             background-color: #007bff;
             color: white;
             text-decoration: none;
             border-radius: 4px;
             text-align: center;
+            transition: background-color 0.3s;
         }
         .download-link:hover {
             background-color: #0056b3;
+        }
+        .file-input-wrapper {
+            margin: 15px 0;
+        }
+        .file-input-wrapper input[type="file"] {
+            display: block;
+            margin: 0 auto;
+            padding: 10px;
         }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>牌位資料處理系統</h1>
-        <div class="upload-section">
-            <h2>請上傳 Excel 檔案</h2>
-            <input type="file" id="excelFile" accept=".xlsx, .xls" />
-            <button class="button" onclick="uploadFile()">處理檔案</button>
+        <div class="instructions">
+            <h2>使用說明</h2>
+            <ul>
+                <li><strong>Excel 檔案要求：</strong>
+                    <ul>
+                        <li>必須是從 BeClass 下載的報名表格式</li>
+                        <li>需包含基本欄位：姓名、Email、行動電話</li>
+                        <li>至少需要包含以下其中一個欄位：
+                            <ul>
+                                <li>祈福牌位</li>
+                                <li>超薦牌位</li>
+                                <li>功德主</li>
+                            </ul>
+                        </li>
+                    </ul>
+                </li>
+                <li><strong>輸出結果：</strong>系統會根據資料自動產生以下 Word 檔案：
+                    <ul>
+                        <li>消災牌位名單（直式）</li>
+                        <li>超薦牌位名單（直式）</li>
+                        <li>功德主名單（橫式）</li>
+                    </ul>
+                </li>
+            </ul>
         </div>
+        <div class="upload-section">
+            <h2>上傳檔案</h2>
+            <div class="file-input-wrapper">
+                <input type="file" id="excelFile" accept=".xlsx, .xls" />
+            </div>
+            <button class="button" onclick="uploadFile()">開始處理</button>
+        </div>
+
         <div id="status"></div>
+        
         <div id="downloadSection" class="download-section">
-            <h3>下載檔案</h3>
+            <h3>下載處理結果</h3>
             <div id="downloadLinks"></div>
         </div>
     </div>
@@ -101,7 +171,7 @@
 
             if (!fileInput.files.length) {
                 statusDiv.className = 'error';
-                statusDiv.textContent = '請選擇檔案';
+                statusDiv.textContent = '請選擇 Excel 檔案';
                 return;
             }
 
@@ -110,7 +180,7 @@
 
             try {
                 statusDiv.className = '';
-                statusDiv.textContent = '處理中...';
+                statusDiv.textContent = '檔案處理中，請稍候...';
                 downloadSection.style.display = 'none';
 
                 const response = await fetch('/process_excel', {
@@ -118,34 +188,34 @@
                     body: formData
                 });
 
-                if (response.ok) {
-                    const result = await response.json();
-                    statusDiv.className = 'success';
-                    statusDiv.textContent = '檔案處理完成！請下載生成的檔案。';
+                const result = await response.json();
 
-                    // 顯示下載區域
+                if (response.ok) {
+                    statusDiv.className = 'success';
+                    statusDiv.textContent = '檔案處理完成！請下載以下檔案。';
+
                     downloadSection.style.display = 'block';
                     downloadLinks.innerHTML = '';
 
-                    // 添加下載連結
                     Object.entries(result.files).forEach(([key, path]) => {
                         const filename = path.split('/').pop();
                         const link = document.createElement('a');
                         link.href = `/download/${filename}`;
                         link.className = 'download-link';
                         link.textContent = {
-                            'xiazai': '下載消災牌位',
-                            'chaojian': '下載超薦牌位',
+                            'xiazai': '下載消災牌位名單',
+                            'chaojian': '下載超薦牌位名單',
                             'gongde': '下載功德主名單'
                         }[key];
                         downloadLinks.appendChild(link);
                     });
                 } else {
-                    throw new Error('處理失敗');
+                    statusDiv.className = 'error';
+                    statusDiv.textContent = result.error || '處理失敗，請確認檔案格式是否正確';
                 }
             } catch (error) {
                 statusDiv.className = 'error';
-                statusDiv.textContent = '處理過程發生錯誤：' + error.message;
+                statusDiv.textContent = '處理過程發生錯誤，請稍後再試';
                 downloadSection.style.display = 'none';
             }
         }
