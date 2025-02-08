@@ -16,13 +16,20 @@ if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
 
 # 新增函數：找到符合條件的欄位名稱
-def find_matching_column(df, keyword):
+def find_matching_column(df, keywords):
     """
     在DataFrame的欄位中尋找包含指定關鍵字的欄位名稱
+    keywords 可以是單個字串或字串列表
     返回找到的第一個匹配欄位名稱，如果沒找到返回None
     """
+    if isinstance(keywords, str):
+        keywords = [keywords]
+    
+    keywords = [k.lower() for k in keywords]
+    
     for col in df.columns:
-        if keyword in str(col):
+        col_lower = str(col).lower()
+        if any(keyword in col_lower for keyword in keywords):
             return col
     return None
 
@@ -73,9 +80,9 @@ def create_word_files(df):
     START_LINE = 20
     MAX_CHARS_PER_LINE = 200
 
-    # 找到對應的欄位名稱
+    # 找到對應的欄位名稱，支援多個關鍵字
     xiazai_col = find_matching_column(df, '祈福牌位')
-    chaojian_col = find_matching_column(df, '超薦牌位')
+    chaojian_col = find_matching_column(df, ['超薦牌位', '超渡牌位'])  # 支援兩種寫法
     gongde_col = find_matching_column(df, '功德主')
 
     # 1. 消災牌位 (直式)
@@ -119,11 +126,14 @@ def create_word_files(df):
         for _, row in df.iterrows():
             if pd.notna(row[chaojian_col]):
                 content_text = str(row[chaojian_col]).replace('\n', ' ')
-                content = f"{row['姓名']}\t{content_text}"
+                # 使用 " | " 作為分隔符號，並在姓名前加上"陽上："
+                content = f"陽上：{row['姓名']} | {content_text}"
                 
-                name_length = len(row['姓名'])
+                # 計算行數時需要考慮新的格式
+                name_length = len(f"陽上：{row['姓名']}")
                 content_length = len(content_text)
-                total_length = name_length + content_length + 1
+                separator_length = 3  # " | " 的長度
+                total_length = name_length + separator_length + content_length
                 estimated_lines = max(1, -(-total_length // MAX_CHARS_PER_LINE))
                 
                 if current_line + estimated_lines > LINES_PER_PAGE:
@@ -209,8 +219,13 @@ def process_excel():
 
         # 檢查是否至少有一個相關欄位
         xiazai_col = find_matching_column(df, '祈福牌位')
-        chaojian_col = find_matching_column(df, '超薦牌位')
+        chaojian_col = find_matching_column(df, ['超薦牌位', '超渡牌位'])  # 支援兩種寫法
         gongde_col = find_matching_column(df, '功德主')
+
+        if not any([xiazai_col, chaojian_col, gongde_col]):
+            error_msg = '必須至少包含「祈福牌位」、「超薦牌位（或超渡牌位）」或「功德主」其中一個相關欄位'
+            app.logger.error(error_msg)
+            return jsonify({'error': error_msg}), 400
 
         if not any([xiazai_col, chaojian_col, gongde_col]):
             error_msg = '必須至少包含「祈福牌位」、「超薦牌位」或「功德主」其中一個相關欄位'
