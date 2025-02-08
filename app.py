@@ -190,7 +190,11 @@ def process_excel():
 
         try:
             app.logger.info('開始讀取 Excel 檔案')
-            df = pd.read_excel(file)
+            # 將行動電話欄位指定為字串類型
+            df = pd.read_excel(file, dtype={'行動電話': str})
+            # 確保行動電話欄位的值都是字串，並補上可能缺少的前導零
+            if '行動電話' in df.columns:
+                df['行動電話'] = df['行動電話'].apply(lambda x: str(x).zfill(10) if pd.notna(x) else '')
             app.logger.info('Excel 檔案讀取完成')
         except Exception as e:
             app.logger.error(f'Excel 讀取失敗: {str(e)}')
