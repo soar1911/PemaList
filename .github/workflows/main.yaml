@@ -2,7 +2,7 @@ name: Deploy to Production
 
 on:
   push:
-    branches: [ main ]  # 當推送到 main 分支時觸發
+    branches: [ main ]
 
 jobs:
   deploy:
@@ -11,18 +11,42 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v2
 
-    - name: Set up SSH
-      env:
-        SSH_HOST: ${{ secrets.SERVER_HOST }}
+    - name: Debug Secrets
       run: |
-        mkdir -p ~/.ssh/
-        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-        chmod 600 ~/.ssh/id_rsa
-        ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
-        # 增加 SSH 的詳細輸出以便偵錯
-        echo "Host ${{ secrets.SERVER_HOST }}" >> ~/.ssh/config
-        echo "  StrictHostKeyChecking no" >> ~/.ssh/config
-        echo "  UserKnownHostsFile=/dev/null" >> ~/.ssh/config
+        if [ -n "${{ secrets.SERVER_HOST }}" ]; then
+          echo "SERVER_HOST is set"
+        else
+          echo "SERVER_HOST is not set"
+          exit 1
+        fi
+
+    - name: Set up SSH
+      run: |
+        # 創建 SSH 目錄
+        mkdir -p ~/.ssh
+        
+        # 檢查並設置 SSH 私鑰
+        if [ -n "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+        else
+          echo "SSH_PRIVATE_KEY is not set"
+          exit 1
+        fi
+        
+        # 設置 SSH 配置
+        echo "Host ${{ secrets.SERVER_HOST }}
+          StrictHostKeyChecking no
+          UserKnownHostsFile=/dev/null
+          " > ~/.ssh/config
+          
+        # 添加服務器到已知主機
+        if [ -n "${{ secrets.SERVER_HOST }}" ]; then
+          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
+        else
+          echo "SERVER_HOST is empty"
+          exit 1
+        fi
 
     - name: Deploy to server
       env:
@@ -30,20 +54,23 @@ jobs:
         SERVER_USER: ${{ secrets.SERVER_USER }}
         DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
       run: |
-        # 測試 SSH 連接
-        ssh -v ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "echo 'SSH connection successful'"
+        # 顯示部署信息
+        echo "Deploying to $SERVER_USER@$SERVER_HOST:$DEPLOY_PATH"
         
-        # 複製專案文件到伺服器
+        # 測試 SSH 連接
+        ssh -v ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "echo 'SSH connection test'"
+        
+        # 確保目標目錄存在
+        ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "mkdir -p ${{ secrets.DEPLOY_PATH }}"
+        
+        # 複製文件
         scp -r ./* ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${{ secrets.DEPLOY_PATH }}/
         
-        # SSH 到伺服器執行部署命令
+        # 執行部署
         ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "cd ${{ secrets.DEPLOY_PATH }} && \
-          # 確保 output_files 目錄存在並設置權限
           mkdir -p output_files && \
           chmod -R 777 output_files && \
-          # 重建並重啟容器
           docker-compose down && \
           docker-compose build --no-cache && \
           docker-compose up -d && \
-          # 清理不使用的映像檔
           docker image prune -f"
