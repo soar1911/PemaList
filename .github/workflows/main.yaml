@@ -19,54 +19,46 @@ jobs:
           echo "SERVER_HOST is not set"
           exit 1
         fi
+        if [ -n "${{ secrets.SERVER_PORT }}" ]; then
+          echo "SERVER_PORT is set"
+        else
+          echo "SERVER_PORT is not set"
+          exit 1
+        fi
 
     - name: Set up SSH
       run: |
-        # 創建 SSH 目錄
         mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
         
-        # 檢查並設置 SSH 私鑰
-        if [ -n "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-        else
-          echo "SSH_PRIVATE_KEY is not set"
-          exit 1
-        fi
-        
-        # 設置 SSH 配置
+        # 設置 SSH 配置，使用 SERVER_PORT
         echo "Host ${{ secrets.SERVER_HOST }}
+          Port ${{ secrets.SERVER_PORT }}
           StrictHostKeyChecking no
           UserKnownHostsFile=/dev/null
           " > ~/.ssh/config
           
-        # 添加服務器到已知主機
-        if [ -n "${{ secrets.SERVER_HOST }}" ]; then
-          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
-        else
-          echo "SERVER_HOST is empty"
-          exit 1
-        fi
+        # 使用指定端口進行 keyscan
+        ssh-keyscan -H -p ${{ secrets.SERVER_PORT }} ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
 
     - name: Deploy to server
       env:
         SERVER_HOST: ${{ secrets.SERVER_HOST }}
         SERVER_USER: ${{ secrets.SERVER_USER }}
+        SERVER_PORT: ${{ secrets.SERVER_PORT }}
         DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
       run: |
         # 顯示部署信息
-        echo "Deploying to $SERVER_USER@$SERVER_HOST:$DEPLOY_PATH"
+        echo "Deploying to $SERVER_USER@$SERVER_HOST:$SERVER_PORT:$DEPLOY_PATH"
         
         # 測試 SSH 連接
-        ssh -v ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "echo 'SSH connection test'"
+        ssh -p ${{ secrets.SERVER_PORT }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "echo 'SSH connection test'"
         
-        # 確保目標目錄存在
-        ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "mkdir -p ${{ secrets.DEPLOY_PATH }}"
+        # 使用 -P 指定 scp 的端口
+        scp -P ${{ secrets.SERVER_PORT }} -r ./* ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${{ secrets.DEPLOY_PATH }}/
         
-        # 複製文件
-        scp -r ./* ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${{ secrets.DEPLOY_PATH }}/
-        
-        # 執行部署
+        # 執行部署命令
         ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "cd ${{ secrets.DEPLOY_PATH }} && \
           mkdir -p output_files && \
           chmod -R 777 output_files && \
