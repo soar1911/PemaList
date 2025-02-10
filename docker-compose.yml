@@ -1,0 +1,11 @@
+version: '3'
+services:
+  web:
+    build: .
+    ports:
+      - "33080:33080"
+    volumes:
+      - ./output_files:/app/output_files
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: always
