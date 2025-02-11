@@ -157,10 +157,14 @@ def create_word_files(df):
         set_document_orientation_and_font(doc3, is_landscape=True)
         doc3.add_heading('功德主', 0)
 
-        table = doc3.add_table(rows=1, cols=4)
+        # 找到管理者註記事項欄位
+        note_col = find_matching_column(df, '管理者註記事項')
+
+        # 修改表格欄位，增加管理者註記事項
+        table = doc3.add_table(rows=1, cols=5)  # 改為 5 欄
         table.style = 'Table Grid'
         header_cells = table.rows[0].cells
-        headers = ['姓名', 'Email', '行動電話', '功德主']
+        headers = ['姓名', 'Email', '行動電話', '功德主', '管理者註記事項']  # 新增管理者註記事項
 
         for i, header in enumerate(headers):
             header_cells[i].text = header
@@ -172,6 +176,8 @@ def create_word_files(df):
                 row_cells[1].text = str(row['Email'])
                 row_cells[2].text = str(row['行動電話'])
                 row_cells[3].text = str(row[gongde_col])
+                # 添加管理者註記事項
+                row_cells[4].text = str(row[note_col]) if note_col and pd.notna(row[note_col]) else ''
 
         file_paths['功德主'] = os.path.join(OUTPUT_DIR, f'功德主_{timestamp}.docx')
         doc3.save(file_paths['功德主'])
@@ -189,7 +195,8 @@ def create_participant_excel(df):
     # 找到相關欄位
     number_col = find_matching_column(df, '項次')
     name_col = find_matching_column(df, '姓名')
-    activity_col = find_matching_column(df, '參加項目')
+    # 修改：支援多個可能的活動欄位名稱
+    activity_col = find_matching_column(df, ['參加項目', '參與課程'])
     note_col = find_matching_column(df, '管理者註記事項')
 
     if not all([number_col, name_col, activity_col]):
@@ -289,11 +296,15 @@ def process_excel():
     try:
         app.logger.info('開始處理上傳檔案')
 
-        # 初始化 response_data（移到最前面）
+        # 初始化 response_data
         response_data = {
             'message': '處理完成',
             'files': {}
         }
+
+        # 獲取活動類型
+        activity_type = request.form.get('activityType', 'both')
+        app.logger.info(f'活動類型: {activity_type}')
 
         if not os.path.exists(OUTPUT_DIR):
             os.makedirs(OUTPUT_DIR)
@@ -325,43 +336,46 @@ def process_excel():
             app.logger.error(f'缺少基本欄位：{", ".join(missing_base_columns)}')
             return jsonify({'error': f'缺少基本欄位：{", ".join(missing_base_columns)}'}), 400
 
-        # 檢查是否至少有一個相關欄位
-        xiazai_col = find_matching_column(df, '祈福牌位')
-        chaojian_col = find_matching_column(df, ['超薦牌位', '超渡牌位'])
-        gongde_col = find_matching_column(df, '功德主')
+        # 根據活動類型檢查必要欄位
+        if activity_type == 'both':
+            # 檢查是否至少有一個相關欄位（法會相關）
+            xiazai_col = find_matching_column(df, '祈福牌位')
+            chaojian_col = find_matching_column(df, ['超薦牌位', '超渡牌位'])
+            gongde_col = find_matching_column(df, '功德主')
 
-        if not any([xiazai_col, chaojian_col, gongde_col]):
-            error_msg = '必須至少包含「祈福牌位」、「超薦牌位（或超渡牌位）」或「功德主」其中一個相關欄位'
-            app.logger.error(error_msg)
-            return jsonify({'error': error_msg}), 400
+            if not any([xiazai_col, chaojian_col, gongde_col]):
+                error_msg = '必須至少包含「祈福牌位」、「超薦牌位（或超渡牌位）」或「功德主」其中一個相關欄位'
+                app.logger.error(error_msg)
+                return jsonify({'error': error_msg}), 400
 
-        # 檢查是否至少有一個欄位有資料
-        has_xiazai_data = xiazai_col is not None and df[xiazai_col].notna().any()
-        has_chaojian_data = chaojian_col is not None and df[chaojian_col].notna().any()
-        has_gongde_data = gongde_col is not None and df[gongde_col].notna().any()
+            # 檢查是否至少有一個欄位有資料
+            has_xiazai_data = xiazai_col is not None and df[xiazai_col].notna().any()
+            has_chaojian_data = chaojian_col is not None and df[chaojian_col].notna().any()
+            has_gongde_data = gongde_col is not None and df[gongde_col].notna().any()
 
-        if not (has_xiazai_data or has_chaojian_data or has_gongde_data):
-            error_msg = '必須至少填寫「祈福牌位」、「超薦牌位」或「功德主」其中一項資料'
-            app.logger.error(error_msg)
-            return jsonify({'error': error_msg}), 400
+            if not (has_xiazai_data or has_chaojian_data or has_gongde_data):
+                error_msg = '必須至少填寫「祈福牌位」、「超薦牌位」或「功德主」其中一項資料'
+                app.logger.error(error_msg)
+                return jsonify({'error': error_msg}), 400
 
-        try:
-            app.logger.info('開始創建 Word 檔案')
-            file_paths, has_xiazai, has_chaojian, has_gongde = create_word_files(df)
-            app.logger.info('Word 檔案創建完成')
+            # 創建法會相關文件
+            try:
+                app.logger.info('開始創建 Word 檔案')
+                file_paths, has_xiazai, has_chaojian, has_gongde = create_word_files(df)
+                app.logger.info('Word 檔案創建完成')
 
-            if has_xiazai:
-                response_data['files']['xiazai'] = os.path.basename(file_paths['消災牌位'])
-            if has_chaojian:
-                response_data['files']['chaojian'] = os.path.basename(file_paths['超薦牌位'])
-            if has_gongde:
-                response_data['files']['gongde'] = os.path.basename(file_paths['功德主'])
+                if has_xiazai:
+                    response_data['files']['xiazai'] = os.path.basename(file_paths['消災牌位'])
+                if has_chaojian:
+                    response_data['files']['chaojian'] = os.path.basename(file_paths['超薦牌位'])
+                if has_gongde:
+                    response_data['files']['gongde'] = os.path.basename(file_paths['功德主'])
 
-        except Exception as e:
-            app.logger.error(f'Word 檔案創建失敗: {str(e)}')
-            return jsonify({'error': f'Word 檔案創建失敗: {str(e)}'}), 500
+            except Exception as e:
+                app.logger.error(f'Word 檔案創建失敗: {str(e)}')
+                return jsonify({'error': f'Word 檔案創建失敗: {str(e)}'}), 500
 
-        # 創建參加者名單
+        # 創建參加者名單（兩種活動類型都需要）
         try:
             participant_excel = create_participant_excel(df)
             if participant_excel:

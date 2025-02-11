@@ -116,6 +116,77 @@
             margin: 0 auto;
             padding: 10px;
         }
+        /* 新增活動類型選擇區域的樣式 */
+        .activity-type {
+            background-color: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 1px solid #ddd;
+        }
+
+        .activity-type h2 {
+            color: #333;
+            font-size: 1.2em;
+            margin-bottom: 15px;
+        }
+
+        .radio-group {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+        }
+
+        .radio-option {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+        }
+
+        .radio-option input[type="radio"] {
+            margin-right: 8px;
+        }
+
+        .radio-option label {
+            font-size: 16px;
+            color: #333;
+        }
+
+                /* 新增活動類型選擇區域的樣式 */
+                .activity-type {
+            background-color: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 1px solid #ddd;
+        }
+
+        .activity-type h2 {
+            color: #333;
+            font-size: 1.2em;
+            margin-bottom: 15px;
+        }
+
+        .radio-group {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+        }
+
+        .radio-option {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+        }
+
+        .radio-option input[type="radio"] {
+            margin-right: 8px;
+        }
+
+        .radio-option label {
+            font-size: 16px;
+            color: #333;
+        }
     </style>
 </head>
 <body>
@@ -146,6 +217,20 @@
                 </li>
             </ul>
         </div>
+        <!-- 新增活動類型選擇區域 -->
+        <div class="activity-type">
+            <h2>請選擇活動類型：</h2>
+            <div class="radio-group">
+                <div class="radio-option">
+                    <input type="radio" id="activityType1" name="activityType" value="both" checked>
+                    <label for="activityType1">法會+課程</label>
+                </div>
+                <div class="radio-option">
+                    <input type="radio" id="activityType2" name="activityType" value="course">
+                    <label for="activityType2">課程</label>
+                </div>
+            </div>
+        </div>
         <div class="upload-section">
             <h2>上傳檔案</h2>
             <div class="file-input-wrapper">
@@ -168,6 +253,8 @@
             const statusDiv = document.getElementById('status');
             const downloadSection = document.getElementById('downloadSection');
             const downloadLinks = document.getElementById('downloadLinks');
+            // 新增：獲取選中的活動類型
+            const activityType = document.querySelector('input[name="activityType"]:checked').value;
 
             if (!fileInput.files.length) {
                 statusDiv.className = 'error';
@@ -177,6 +264,7 @@
 
             const formData = new FormData();
             formData.append('file', fileInput.files[0]);
+            formData.append('activityType', activityType);  // 使用正確獲取的 activityType
 
             try {
                 statusDiv.className = '';
@@ -196,18 +284,31 @@
 
                     downloadSection.style.display = 'block';
                     downloadLinks.innerHTML = '';
+                    const displayTexts = {
+                        'gongde': '下載功德主名單',
+                        'xiazai': '下載消災牌位名單',
+                        'chaojian': '下載超薦牌位名單',
+                        'participant': '下載現場參加者名單'
+                    };
 
-                    Object.entries(result.files).forEach(([key, path]) => {
+                    // 定義顯示順序
+                    const displayOrder = ['gongde', 'xiazai', 'chaojian', 'participant'];
+                    const orderedFiles = [];
+
+                    // 按照順序整理檔案
+                    displayOrder.forEach(key => {
+                        if (key in result.files) {
+                            orderedFiles.push([key, result.files[key]]);
+                        }
+                    });
+
+                    // 創建下載連結
+                    orderedFiles.forEach(([key, path]) => {
                         const filename = path.split('/').pop();
                         const link = document.createElement('a');
                         link.href = `/download/${filename}`;
                         link.className = 'download-link';
-                        link.textContent = {
-                            'xiazai': '下載消災牌位名單',
-                            'chaojian': '下載超薦牌位名單',
-                            'gongde': '下載功德主名單',
-                            'participant': '下載現場參加者名單'
-                        }[key];
+                        link.textContent = displayTexts[key];
                         downloadLinks.appendChild(link);
                     });
                 } else {
