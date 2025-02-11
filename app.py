@@ -7,6 +7,8 @@ from docx.enum.text import WD_PARAGRAPH_ALIGNMENT, WD_LINE_SPACING
 from docx.shared import Length
 import os
 from datetime import datetime
+from openpyxl import Workbook
+from openpyxl.styles import Border, Side, Alignment, Font
 
 app = Flask(__name__)
 
@@ -24,9 +26,9 @@ def find_matching_column(df, keywords):
     """
     if isinstance(keywords, str):
         keywords = [keywords]
-    
+
     keywords = [k.lower() for k in keywords]
-    
+
     for col in df.columns:
         col_lower = str(col).lower()
         if any(keyword in col_lower for keyword in keywords):
@@ -42,7 +44,7 @@ def set_document_orientation_and_font(doc, is_landscape=True):
     else:
         # 設定為直式
         section.orientation = WD_ORIENT.PORTRAIT
-    
+
     # 設定邊界為 1.27cm
     section.left_margin = Cm(1.27)
     section.right_margin = Cm(1.27)
@@ -97,12 +99,12 @@ def create_word_files(df):
             if pd.notna(row[xiazai_col]):
                 content_text = str(row[xiazai_col]).replace('\n', ' ')
                 content = f"{row['姓名']}\t{content_text}"
-                
+
                 name_length = len(row['姓名'])
                 content_length = len(content_text)
                 total_length = name_length + content_length + 1
                 estimated_lines = max(1, -(-total_length // MAX_CHARS_PER_LINE))
-                
+
                 if current_line + estimated_lines > LINES_PER_PAGE:
                     doc1.add_page_break()
                     add_empty_lines(doc1, START_LINE - 1)
@@ -128,14 +130,14 @@ def create_word_files(df):
                 content_text = str(row[chaojian_col]).replace('\n', ' ')
                 # 使用 " | " 作為分隔符號，並在姓名前加上"陽上："
                 content = f"陽上：{row['姓名']} | {content_text}"
-                
+
                 # 計算行數時需要考慮新的格式
                 name_length = len(f"陽上：{row['姓名']}")
                 content_length = len(content_text)
                 separator_length = 3  # " | " 的長度
                 total_length = name_length + separator_length + content_length
                 estimated_lines = max(1, -(-total_length // MAX_CHARS_PER_LINE))
-                
+
                 if current_line + estimated_lines > LINES_PER_PAGE:
                     doc2.add_page_break()
                     add_empty_lines(doc2, START_LINE - 1)
@@ -180,11 +182,119 @@ def create_word_files(df):
 def index():
     return render_template('index.html')
 
+def create_participant_excel(df):
+    """創建參加者 Excel 檔案"""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # 找到相關欄位
+    number_col = find_matching_column(df, '項次')
+    name_col = find_matching_column(df, '姓名')
+    activity_col = find_matching_column(df, '參加項目')
+    note_col = find_matching_column(df, '管理者註記事項')
+
+    if not all([number_col, name_col, activity_col]):
+        return None
+
+    # 篩選現場參加者（包含"現場上課"或"到場參加"）
+    attendance_mask = df[activity_col].str.contains('現場上課|到場參加', case=False, na=False)
+    full_participants = df[attendance_mask].copy()
+
+    if full_participants.empty:
+        return None
+
+    # 重設索引並從1開始編號
+    full_participants = full_participants.reset_index(drop=True)
+    full_participants.index = full_participants.index + 1
+
+    # 創建新的 Excel 工作簿
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "全程參加者名單"
+
+    # 添加標題行
+    ws.merge_cells('A1:E1')
+    title_cell = ws.cell(row=1, column=1)
+    title_cell.value = "到場參加"  # 設定標題文字
+    title_cell.font = Font(size=24, name='Microsoft JhengHei')  # 設定字型
+    title_cell.alignment = Alignment(horizontal='left', vertical='center')  # 置中對齊
+
+
+    # 設定欄位標題（第二行）
+    headers = ['項次', '姓名', '法本', '便當', '管理者註記事項']
+    for col, header in enumerate(headers, 1):
+        cell = ws.cell(row=2, column=col, value=header)
+        cell.font = Font(size=14, name='Microsoft JhengHei')  # 改用微軟正黑體
+
+    # 填入資料（從第三行開始）
+    for idx, row in full_participants.iterrows():
+        current_row = idx + 2  # 因為第一行是標題，第二行是欄位名稱
+        # 填入每個欄位並設定字型
+        cells = [
+            (1, idx),  # 項次
+            (2, row[name_col]),  # 姓名
+            (3, ''),  # 法本
+            (4, ''),  # 便當
+            (5, row[note_col] if note_col and pd.notna(row[note_col]) else '')  # 管理者註記事項
+        ]
+
+        for col, value in cells:
+            cell = ws.cell(row=current_row, column=col, value=value)
+            cell.font = Font(size=14)  # 設定資料行的字型大小為14
+
+    # 設定格式
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+
+    # 設定欄寬
+    ws.column_dimensions['A'].width = 10  # 項次
+    ws.column_dimensions['B'].width = 15  # 姓名
+    ws.column_dimensions['C'].width = 15  # 法本
+    ws.column_dimensions['D'].width = 15  # 便當
+    ws.column_dimensions['E'].width = 30  # 管理者註記事項
+
+    # 設定列高
+    ws.row_dimensions[1].height = 40  # 第一行高度
+    # 設定第二行開始的列高為20
+    for row in range(2, len(full_participants) + 3):  # +3是因為包含標題行和欄位標題行
+        ws.row_dimensions[row].height = 20
+
+    # 應用格式到所有使用的單元格
+    for row in ws.iter_rows(min_row=1, max_row=len(full_participants)+2,
+                          min_col=1, max_col=5):
+        for cell in row:
+            cell.border = thin_border
+            if cell.row > 1:  # 除了第一行的標題外
+                cell.alignment = Alignment(horizontal='center', vertical='center')
+                # 確保所有單元格都使用微軟正黑體
+                if not cell.font or cell.font.name != 'Microsoft JhengHei':
+                    current_font = cell.font or Font()
+                    cell.font = Font(
+                        name='Microsoft JhengHei',
+                        size=current_font.size or 14,
+                        bold=current_font.bold,
+                        italic=current_font.italic
+                    )
+
+    # 儲存檔案
+    file_path = os.path.join(OUTPUT_DIR, f'全程參加者名單_{timestamp}.xlsx')
+    wb.save(file_path)
+    return file_path
+
 @app.route('/process_excel', methods=['POST'])
 def process_excel():
     try:
         app.logger.info('開始處理上傳檔案')
-        
+
+        # 初始化 response_data（移到最前面）
+        response_data = {
+            'message': '處理完成',
+            'files': {}
+        }
+
         if not os.path.exists(OUTPUT_DIR):
             os.makedirs(OUTPUT_DIR)
             app.logger.info('創建輸出目錄')
@@ -200,9 +310,7 @@ def process_excel():
 
         try:
             app.logger.info('開始讀取 Excel 檔案')
-            # 將行動電話欄位指定為字串類型
             df = pd.read_excel(file, dtype={'行動電話': str})
-            # 確保行動電話欄位的值都是字串，並補上可能缺少的前導零
             if '行動電話' in df.columns:
                 df['行動電話'] = df['行動電話'].apply(lambda x: str(x).zfill(10) if pd.notna(x) else '')
             app.logger.info('Excel 檔案讀取完成')
@@ -219,16 +327,11 @@ def process_excel():
 
         # 檢查是否至少有一個相關欄位
         xiazai_col = find_matching_column(df, '祈福牌位')
-        chaojian_col = find_matching_column(df, ['超薦牌位', '超渡牌位'])  # 支援兩種寫法
+        chaojian_col = find_matching_column(df, ['超薦牌位', '超渡牌位'])
         gongde_col = find_matching_column(df, '功德主')
 
         if not any([xiazai_col, chaojian_col, gongde_col]):
             error_msg = '必須至少包含「祈福牌位」、「超薦牌位（或超渡牌位）」或「功德主」其中一個相關欄位'
-            app.logger.error(error_msg)
-            return jsonify({'error': error_msg}), 400
-
-        if not any([xiazai_col, chaojian_col, gongde_col]):
-            error_msg = '必須至少包含「祈福牌位」、「超薦牌位」或「功德主」其中一個相關欄位'
             app.logger.error(error_msg)
             return jsonify({'error': error_msg}), 400
 
@@ -246,21 +349,25 @@ def process_excel():
             app.logger.info('開始創建 Word 檔案')
             file_paths, has_xiazai, has_chaojian, has_gongde = create_word_files(df)
             app.logger.info('Word 檔案創建完成')
+
+            if has_xiazai:
+                response_data['files']['xiazai'] = os.path.basename(file_paths['消災牌位'])
+            if has_chaojian:
+                response_data['files']['chaojian'] = os.path.basename(file_paths['超薦牌位'])
+            if has_gongde:
+                response_data['files']['gongde'] = os.path.basename(file_paths['功德主'])
+
         except Exception as e:
             app.logger.error(f'Word 檔案創建失敗: {str(e)}')
             return jsonify({'error': f'Word 檔案創建失敗: {str(e)}'}), 500
 
-        response_data = {
-            'message': '處理完成',
-            'files': {}
-        }
-        
-        if has_xiazai:
-            response_data['files']['xiazai'] = os.path.basename(file_paths['消災牌位'])
-        if has_chaojian:
-            response_data['files']['chaojian'] = os.path.basename(file_paths['超薦牌位'])
-        if has_gongde:
-            response_data['files']['gongde'] = os.path.basename(file_paths['功德主'])
+        # 創建參加者名單
+        try:
+            participant_excel = create_participant_excel(df)
+            if participant_excel:
+                response_data['files']['participant'] = os.path.basename(participant_excel)
+        except Exception as e:
+            app.logger.error(f'參加者名單 Excel 創建失敗: {str(e)}')
 
         app.logger.info('處理完成，返回結果')
         return jsonify(response_data), 200
@@ -286,5 +393,6 @@ def download_file(filename):
         )
     except Exception as e:
         return str(e), 400
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=33080, debug=True)
