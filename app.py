@@ -14,8 +14,8 @@ app = Flask(__name__)
 
 # 將常量移到配置類中
 class Config:
-    # 檔案輸出目錄
-    OUTPUT_DIR = 'output_files'
+    # 修改檔案輸出目錄使用 os.path.join
+    OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output_files')
 
     # 文件排版相關設定
     LINES_PER_PAGE = 30  # 每頁行數
@@ -30,8 +30,14 @@ class Config:
         'normal': 12    # 一般文字字型大小
     }
 
-    # 預設字型名稱
-    FONT_NAME = 'Microsoft JhengHei'
+    # 修改字型設定，增加 Linux 相容的字型
+    FONT_NAMES = {
+        'windows': 'Microsoft JhengHei',
+        'linux': 'Noto Sans CJK TC'  # Linux 系統常用的中文字型
+    }
+
+    # 直接設置 FONT_NAME 為靜態屬性
+    FONT_NAME = FONT_NAMES['windows'] if os.name == 'nt' else FONT_NAMES['linux']
 
     # Excel 欄寬設定
     COLUMN_WIDTHS = {
@@ -59,6 +65,15 @@ class Config:
 # 確保輸出目錄存在
 if not os.path.exists(Config.OUTPUT_DIR):
     os.makedirs(Config.OUTPUT_DIR)
+
+def ensure_output_directory():
+    """確保輸出目錄存在且具有正確的權限"""
+    if not os.path.exists(Config.OUTPUT_DIR):
+        try:
+            os.makedirs(Config.OUTPUT_DIR, mode=0o755)  # 設置目錄權限為 755
+        except Exception as e:
+            app.logger.error(f"無法創建輸出目錄: {str(e)}")
+            raise
 
 # 新增函數：找到符合條件的欄位名稱
 def find_matching_column(df, keywords):
@@ -133,20 +148,25 @@ def create_content_file(df, column_name, file_type, timestamp, is_landscape=Fals
 
     doc = create_word_document(is_landscape)
 
-    # 移除 if not is_landscape: 條件，讓所有文件都能處理
     # 預先過濾有效數據，減少迭代次數
     valid_rows = df[df[column_name].notna()].copy()
 
-    # 預處理內容，減少循環中的字符串操作
-    valid_rows['content'] = valid_rows.apply(
-        lambda row: f"{prefix}{row['姓名']}{' | ' if prefix else chr(9)}{str(row[column_name]).replace('\n', ' ')}",
-        axis=1
-    )
+    def format_row_content(row):
+        """格式化每一行的內容"""
+        name = row['姓名']
+        # 使用 replace 替換換行符，避免在 f-string 中使用反斜線
+        content = str(row[column_name]).replace('\n', ' ').replace('\r', '')
+        separator = ' | ' if prefix else '\t'
+        return f"{prefix}{name}{separator}{content}"
+
+    # 使用 apply 函數和新的格式化函數
+    valid_rows['content'] = valid_rows.apply(format_row_content, axis=1)
 
     # 一次性添加空行
     add_empty_lines(doc, Config.START_LINE - 1)
     current_line = Config.START_LINE
 
+    # 處理每一行內容
     for content in valid_rows['content']:
         estimated_lines = estimate_line_count(content, Config.MAX_CHARS_PER_LINE)
 
@@ -159,8 +179,17 @@ def create_content_file(df, column_name, file_type, timestamp, is_landscape=Fals
         set_paragraph_format(paragraph)
         current_line += estimated_lines
 
+    # 保存文件
     file_path = os.path.join(Config.OUTPUT_DIR, f'{file_type}_{timestamp}.docx')
-    doc.save(file_path)
+    try:
+        doc.save(file_path)
+        # 設置檔案權限（在 Linux 環境中）
+        if os.name != 'nt':
+            os.chmod(file_path, 0o644)
+    except Exception as e:
+        app.logger.error(f"保存文件失敗: {str(e)}")
+        raise
+
     return file_path
 
 def create_gongde_file(df, column_mapping, timestamp):
