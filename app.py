@@ -12,10 +12,53 @@ from openpyxl.styles import Border, Side, Alignment, Font
 
 app = Flask(__name__)
 
+# 將常量移到配置類中
+class Config:
+    # 檔案輸出目錄
+    OUTPUT_DIR = 'output_files'
+
+    # 文件排版相關設定
+    LINES_PER_PAGE = 30  # 每頁行數
+    START_LINE = 20      # 起始行數
+    MAX_CHARS_PER_LINE = 200  # 每行最大字元數
+
+    # 字型大小設定（單位：pt）
+    FONT_SIZES = {
+        'title': 24,    # 標題字型大小
+        'header': 14,   # 表頭字型大小
+        'content': 14,  # 內容字型大小
+        'normal': 12    # 一般文字字型大小
+    }
+
+    # 預設字型名稱
+    FONT_NAME = 'Microsoft JhengHei'
+
+    # Excel 欄寬設定
+    COLUMN_WIDTHS = {
+        'number': 10,  # 項次欄寬
+        'name': 15,    # 姓名欄寬
+        'book': 15,    # 法本欄寬
+        'meal': 15,    # 便當欄寬
+        'note': 30     # 備註欄寬
+    }
+
+    # Excel 列高設定
+    ROW_HEIGHTS = {
+        'title': 40,    # 標題列高
+        'content': 20   # 內容列高
+    }
+
+    # 文件命名模板
+    FILE_NAMES = {
+        'xiazai': '消災牌位',
+        'chaojian': '超薦牌位',
+        'gongde': '功德主',
+        'participant': '全程參加者名單'
+    }
+
 # 確保輸出目錄存在
-OUTPUT_DIR = 'output_files'
-if not os.path.exists(OUTPUT_DIR):
-    os.makedirs(OUTPUT_DIR)
+if not os.path.exists(Config.OUTPUT_DIR):
+    os.makedirs(Config.OUTPUT_DIR)
 
 # 新增函數：找到符合條件的欄位名稱
 def find_matching_column(df, keywords):
@@ -34,6 +77,7 @@ def find_matching_column(df, keywords):
         if any(keyword in col_lower for keyword in keywords):
             return col
     return None
+
 
 def set_document_orientation_and_font(doc, is_landscape=True):
     section = doc.sections[0]
@@ -54,7 +98,8 @@ def set_document_orientation_and_font(doc, is_landscape=True):
     # 設定預設字型大小
     style = doc.styles['Normal']
     font = style.font
-    font.size = Pt(12)
+    font.size = Pt(Config.FONT_SIZES['normal'])
+    font.name = Config.FONT_NAME
 
 def set_paragraph_format(paragraph):
     """設置段落格式：無間距，固定行高16pt"""
@@ -75,114 +120,148 @@ def estimate_line_count(text, max_chars_per_line):
         return 1
     return -(-len(text) // max_chars_per_line)  # 向上取整除法
 
-def create_word_files(df):
+def create_word_document(is_landscape=False):
+    """創建並初始化 Word 文件"""
+    doc = Document()
+    set_document_orientation_and_font(doc, is_landscape)
+    return doc
+
+def create_content_file(df, column_name, file_type, timestamp, is_landscape=False, prefix=""):
+    """通用函數用於創建內容文件"""
+    if not column_name or not df[column_name].notna().any():
+        return None
+
+    doc = create_word_document(is_landscape)
+
+    # 移除 if not is_landscape: 條件，讓所有文件都能處理
+    # 預先過濾有效數據，減少迭代次數
+    valid_rows = df[df[column_name].notna()].copy()
+
+    # 預處理內容，減少循環中的字符串操作
+    valid_rows['content'] = valid_rows.apply(
+        lambda row: f"{prefix}{row['姓名']}{' | ' if prefix else '\t'}{str(row[column_name]).replace('\n', ' ')}",
+        axis=1
+    )
+
+    # 一次性添加空行
+    add_empty_lines(doc, Config.START_LINE - 1)
+    current_line = Config.START_LINE
+
+    for content in valid_rows['content']:
+        estimated_lines = estimate_line_count(content, Config.MAX_CHARS_PER_LINE)
+
+        if current_line + estimated_lines > Config.LINES_PER_PAGE:
+            doc.add_page_break()
+            add_empty_lines(doc, Config.START_LINE - 1)
+            current_line = Config.START_LINE
+
+        paragraph = doc.add_paragraph(content)
+        set_paragraph_format(paragraph)
+        current_line += estimated_lines
+
+    file_path = os.path.join(Config.OUTPUT_DIR, f'{file_type}_{timestamp}.docx')
+    doc.save(file_path)
+    return file_path
+
+def create_gongde_file(df, column_mapping, timestamp):
+    """創建功德主文件"""
+    if not column_mapping['gongde'] or not df[column_mapping['gongde']].notna().any():
+        return None
+
+    doc = create_word_document(is_landscape=True)
+
+    # 預先過濾有效數據，並確保包含管理者註記事項欄位
+    columns_to_keep = ['姓名', 'Email', '行動電話', column_mapping['gongde']]
+    if column_mapping.get('note'):  # 如果有管理者註記事項欄位，加入到要保留的欄位中
+        columns_to_keep.append(column_mapping['note'])
+
+    # 過濾有效數據
+    valid_rows = df[df[column_mapping['gongde']].notna()][columns_to_keep].copy()
+
+    # 設置文件標題
+    heading = doc.add_heading('功德主', 0)
+    heading.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+    # 設置標題字型
+    for run in heading.runs:
+        run.font.name = Config.FONT_NAME
+        run.font.size = Pt(Config.FONT_SIZES['title'])
+
+    # 創建並設置表格
+    table = doc.add_table(rows=len(valid_rows) + 1, cols=5)
+    table.style = 'Table Grid'
+    table.autofit = True
+
+    # 表頭設置
+    headers = ['姓名', 'Email', '行動電話', '功德主', '管理者註記事項']
+    for idx, header in enumerate(headers):
+        cell = table.cell(0, idx)
+        cell.text = header
+        # 設置表頭字型
+        for paragraph in cell.paragraphs:
+            paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+            for run in paragraph.runs:
+                run.font.name = Config.FONT_NAME
+                run.font.size = Pt(Config.FONT_SIZES['header'])
+
+    # 批量填充數據
+    for row_idx, row in enumerate(valid_rows.iterrows(), 1):
+        row_data = row[1]  # 獲取行數據
+        cells = table.rows[row_idx].cells
+
+        # 填充基本資料
+        cells[0].text = str(row_data['姓名'])
+        cells[1].text = str(row_data['Email'])
+        cells[2].text = str(row_data['行動電話'])
+        cells[3].text = str(row_data[column_mapping['gongde']])
+
+        # 處理管理者註記事項
+        if column_mapping.get('note'):
+            note_value = row_data[column_mapping['note']]
+            cells[4].text = str(note_value) if pd.notna(note_value) else ''
+        else:
+            cells[4].text = ''
+
+        # 設置單元格對齊和字型
+        for cell in cells:
+            for paragraph in cell.paragraphs:
+                paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+                for run in paragraph.runs:
+                    run.font.name = Config.FONT_NAME
+                    run.font.size = Pt(Config.FONT_SIZES['content'])
+
+    file_path = os.path.join(Config.OUTPUT_DIR, f'{Config.FILE_NAMES["gongde"]}_{timestamp}.docx')
+    doc.save(file_path)
+    return file_path
+
+def create_word_files(df, column_mapping):  # 修改函數參數，接收 column_mapping
+    """主函數：創建所有 Word 文件"""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     file_paths = {}
-    LINES_PER_PAGE = 30
-    START_LINE = 20
-    MAX_CHARS_PER_LINE = 200
 
-    # 找到對應的欄位名稱，支援多個關鍵字
-    xiazai_col = find_matching_column(df, '祈福牌位')
-    chaojian_col = find_matching_column(df, ['超薦牌位', '超渡牌位'])  # 支援兩種寫法
-    gongde_col = find_matching_column(df, '功德主')
+    # 移除重複的 column_mapping 處理
+    # 檢查是否成功匹配到必要的欄位
+    if not column_mapping['gongde']:
+        app.logger.warning('功德主欄位未找到，跳過功德主文件生成')
 
-    # 1. 消災牌位 (直式)
-    has_xiazai = xiazai_col is not None and df[xiazai_col].notna().any()
-    if has_xiazai:
-        doc1 = Document()
-        set_document_orientation_and_font(doc1, is_landscape=False)
-        add_empty_lines(doc1, START_LINE - 1)
+    # 創建消災牌位文件
+    if path := create_content_file(df, column_mapping['xiazai'], Config.FILE_NAMES['xiazai'], timestamp):
+        file_paths[Config.FILE_NAMES['xiazai']] = path
 
-        current_line = START_LINE
-        for _, row in df.iterrows():
-            if pd.notna(row[xiazai_col]):
-                content_text = str(row[xiazai_col]).replace('\n', ' ')
-                content = f"{row['姓名']}\t{content_text}"
+    # 創建超薦牌位文件
+    if path := create_content_file(df, column_mapping['chaojian'], Config.FILE_NAMES['chaojian'], timestamp, prefix="陽上："):
+        file_paths[Config.FILE_NAMES['chaojian']] = path
 
-                name_length = len(row['姓名'])
-                content_length = len(content_text)
-                total_length = name_length + content_length + 1
-                estimated_lines = max(1, -(-total_length // MAX_CHARS_PER_LINE))
+    # 創建功德主文件
+    if column_mapping['gongde']:  # 確保功德主欄位存在
+        if path := create_gongde_file(df, column_mapping, timestamp):
+            file_paths[Config.FILE_NAMES['gongde']] = path
 
-                if current_line + estimated_lines > LINES_PER_PAGE:
-                    doc1.add_page_break()
-                    add_empty_lines(doc1, START_LINE - 1)
-                    current_line = START_LINE
-
-                paragraph = doc1.add_paragraph(content)
-                set_paragraph_format(paragraph)
-                current_line += estimated_lines
-
-        file_paths['消災牌位'] = os.path.join(OUTPUT_DIR, f'消災牌位_{timestamp}.docx')
-        doc1.save(file_paths['消災牌位'])
-
-    # 2. 超薦牌位 (直式)
-    has_chaojian = chaojian_col is not None and df[chaojian_col].notna().any()
-    if has_chaojian:
-        doc2 = Document()
-        set_document_orientation_and_font(doc2, is_landscape=False)
-        add_empty_lines(doc2, START_LINE - 1)
-
-        current_line = START_LINE
-        for _, row in df.iterrows():
-            if pd.notna(row[chaojian_col]):
-                content_text = str(row[chaojian_col]).replace('\n', ' ')
-                # 使用 " | " 作為分隔符號，並在姓名前加上"陽上："
-                content = f"陽上：{row['姓名']} | {content_text}"
-
-                # 計算行數時需要考慮新的格式
-                name_length = len(f"陽上：{row['姓名']}")
-                content_length = len(content_text)
-                separator_length = 3  # " | " 的長度
-                total_length = name_length + separator_length + content_length
-                estimated_lines = max(1, -(-total_length // MAX_CHARS_PER_LINE))
-
-                if current_line + estimated_lines > LINES_PER_PAGE:
-                    doc2.add_page_break()
-                    add_empty_lines(doc2, START_LINE - 1)
-                    current_line = START_LINE
-
-                paragraph = doc2.add_paragraph(content)
-                set_paragraph_format(paragraph)
-                current_line += estimated_lines
-
-        file_paths['超薦牌位'] = os.path.join(OUTPUT_DIR, f'超薦牌位_{timestamp}.docx')
-        doc2.save(file_paths['超薦牌位'])
-
-    # 3. 功德主 (橫式)
-    has_gongde = gongde_col is not None and df[gongde_col].notna().any()
-    if has_gongde:
-        doc3 = Document()
-        set_document_orientation_and_font(doc3, is_landscape=True)
-        doc3.add_heading('功德主', 0)
-
-        # 找到管理者註記事項欄位
-        note_col = find_matching_column(df, '管理者註記事項')
-
-        # 修改表格欄位，增加管理者註記事項
-        table = doc3.add_table(rows=1, cols=5)  # 改為 5 欄
-        table.style = 'Table Grid'
-        header_cells = table.rows[0].cells
-        headers = ['姓名', 'Email', '行動電話', '功德主', '管理者註記事項']  # 新增管理者註記事項
-
-        for i, header in enumerate(headers):
-            header_cells[i].text = header
-
-        for _, row in df.iterrows():
-            if pd.notna(row[gongde_col]):
-                row_cells = table.add_row().cells
-                row_cells[0].text = str(row['姓名'])
-                row_cells[1].text = str(row['Email'])
-                row_cells[2].text = str(row['行動電話'])
-                row_cells[3].text = str(row[gongde_col])
-                # 添加管理者註記事項
-                row_cells[4].text = str(row[note_col]) if note_col and pd.notna(row[note_col]) else ''
-
-        file_paths['功德主'] = os.path.join(OUTPUT_DIR, f'功德主_{timestamp}.docx')
-        doc3.save(file_paths['功德主'])
-
-    return file_paths, has_xiazai, has_chaojian, has_gongde
+    return (
+        file_paths,
+        bool(column_mapping['xiazai']),
+        bool(column_mapping['chaojian']),
+        bool(column_mapping['gongde'])
+    )
 
 @app.route('/')
 def index():
@@ -192,211 +271,228 @@ def create_participant_excel(df):
     """創建參加者 Excel 檔案"""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # 找到相關欄位
-    number_col = find_matching_column(df, '項次')
-    name_col = find_matching_column(df, '姓名')
-    # 修改：支援多個可能的活動欄位名稱
-    activity_col = find_matching_column(df, ['參加項目', '參與課程'])
-    note_col = find_matching_column(df, '管理者註記事項')
+    # 找到相關欄位並驗證
+    columns = {
+        'number': find_matching_column(df, '項次'),
+        'name': find_matching_column(df, '姓名'),
+        'activity': find_matching_column(df, ['參加項目', '參與課程']),
+        'note': find_matching_column(df, '管理者註記事項')
+    }
 
-    if not all([number_col, name_col, activity_col]):
+    if not all([columns['name'], columns['activity']]):
         return None
 
-    # 篩選現場參加者（包含"現場上課"或"到場參加"）
-    attendance_mask = df[activity_col].str.contains('現場上課|到場參加', case=False, na=False)
-    full_participants = df[attendance_mask].copy()
+    # 使用向量化操作篩選參加者
+    attendance_mask = df[columns['activity']].str.contains('現場上課|到場參加', case=False, na=False)
+    participants = df[attendance_mask].copy()
 
-    if full_participants.empty:
+    if participants.empty:
         return None
 
-    # 重設索引並從1開始編號
-    full_participants = full_participants.reset_index(drop=True)
-    full_participants.index = full_participants.index + 1
-
-    # 創建新的 Excel 工作簿
+    # 創建工作簿和設置基本屬性
     wb = Workbook()
     ws = wb.active
     ws.title = "全程參加者名單"
 
-    # 添加標題行
-    ws.merge_cells('A1:E1')
-    title_cell = ws.cell(row=1, column=1)
-    title_cell.value = "到場參加"  # 設定標題文字
-    title_cell.font = Font(size=24, name='Microsoft JhengHei')  # 設定字型
-    title_cell.alignment = Alignment(horizontal='left', vertical='center')  # 置中對齊
+    # 預定義樣式
+    styles = {
+        'title': Font(size=Config.FONT_SIZES['title'], name=Config.FONT_NAME),
+        'header': Font(size=Config.FONT_SIZES['header'], name=Config.FONT_NAME),
+        'content': Font(size=Config.FONT_SIZES['content'], name=Config.FONT_NAME),
+        'border': Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+    }
 
+    # 設置欄寬（單位：字符寬度）
+    ws.column_dimensions['A'].width = Config.COLUMN_WIDTHS['number']  # 項次
+    ws.column_dimensions['B'].width = Config.COLUMN_WIDTHS['name']    # 姓名
+    ws.column_dimensions['C'].width = Config.COLUMN_WIDTHS['book']    # 法本
+    ws.column_dimensions['D'].width = Config.COLUMN_WIDTHS['meal']    # 便當
+    ws.column_dimensions['E'].width = Config.COLUMN_WIDTHS['note']    # 備註
 
-    # 設定欄位標題（第二行）
+    # 設置列高
+    ws.row_dimensions[1].height = Config.ROW_HEIGHTS['title']
+    for row in range(2, len(participants) + 3):
+        ws.row_dimensions[row].height = Config.ROW_HEIGHTS['content']
+
+    # 使用批量操作填充數據，從1開始編號
+    data = [[i] + [row[columns['name']], '', '',
+            row[columns['note']] if columns['note'] and pd.notna(row[columns['note']]) else '']
+            for i, (_, row) in enumerate(participants.iterrows(), 1)]  # 使用 enumerate 從1開始編號
+
+    # 寫入表頭
     headers = ['項次', '姓名', '法本', '便當', '管理者註記事項']
     for col, header in enumerate(headers, 1):
         cell = ws.cell(row=2, column=col, value=header)
-        cell.font = Font(size=14, name='Microsoft JhengHei')  # 改用微軟正黑體
+        cell.font = styles['header']
+        cell.border = styles['border']
+        cell.alignment = Alignment(horizontal='center', vertical='center')
 
-    # 填入資料（從第三行開始）
-    for idx, row in full_participants.iterrows():
-        current_row = idx + 2  # 因為第一行是標題，第二行是欄位名稱
-        # 填入每個欄位並設定字型
-        cells = [
-            (1, idx),  # 項次
-            (2, row[name_col]),  # 姓名
-            (3, ''),  # 法本
-            (4, ''),  # 便當
-            (5, row[note_col] if note_col and pd.notna(row[note_col]) else '')  # 管理者註記事項
-        ]
+    # 批量寫入數據
+    for row_idx, row_data in enumerate(data, 3):
+        for col_idx, value in enumerate(row_data, 1):
+            cell = ws.cell(row=row_idx, column=col_idx, value=value)
+            cell.font = styles['content']
+            cell.border = styles['border']
+            cell.alignment = Alignment(horizontal='center', vertical='center')
 
-        for col, value in cells:
-            cell = ws.cell(row=current_row, column=col, value=value)
-            cell.font = Font(size=14)  # 設定資料行的字型大小為14
-
-    # 設定格式
-    thin_border = Border(
-        left=Side(style='thin'),
-        right=Side(style='thin'),
-        top=Side(style='thin'),
-        bottom=Side(style='thin')
-    )
-
-    # 設定欄寬
-    ws.column_dimensions['A'].width = 10  # 項次
-    ws.column_dimensions['B'].width = 15  # 姓名
-    ws.column_dimensions['C'].width = 15  # 法本
-    ws.column_dimensions['D'].width = 15  # 便當
-    ws.column_dimensions['E'].width = 30  # 管理者註記事項
-
-    # 設定列高
-    ws.row_dimensions[1].height = 40  # 第一行高度
-    # 設定第二行開始的列高為20
-    for row in range(2, len(full_participants) + 3):  # +3是因為包含標題行和欄位標題行
-        ws.row_dimensions[row].height = 20
-
-    # 應用格式到所有使用的單元格
-    for row in ws.iter_rows(min_row=1, max_row=len(full_participants)+2,
-                          min_col=1, max_col=5):
-        for cell in row:
-            cell.border = thin_border
-            if cell.row > 1:  # 除了第一行的標題外
-                cell.alignment = Alignment(horizontal='center', vertical='center')
-                # 確保所有單元格都使用微軟正黑體
-                if not cell.font or cell.font.name != 'Microsoft JhengHei':
-                    current_font = cell.font or Font()
-                    cell.font = Font(
-                        name='Microsoft JhengHei',
-                        size=current_font.size or 14,
-                        bold=current_font.bold,
-                        italic=current_font.italic
-                    )
-
-    # 儲存檔案
-    file_path = os.path.join(OUTPUT_DIR, f'全程參加者名單_{timestamp}.xlsx')
+    # 儲存文件
+    file_path = os.path.join(Config.OUTPUT_DIR, f'{Config.FILE_NAMES["participant"]}_{timestamp}.xlsx')
     wb.save(file_path)
     return file_path
 
 @app.route('/process_excel', methods=['POST'])
 def process_excel():
+    """處理上傳的 Excel 檔案並生成相應文件"""
+
+    def validate_file():
+        """驗證上傳的文件"""
+        if 'file' not in request.files:
+            raise ValueError('沒有檔案')
+        file = request.files['file']
+        if file.filename == '':
+            raise ValueError('沒有選擇檔案')
+        return file
+
+    def read_excel_file(file):
+        """讀取並預處理 Excel 檔案"""
+        df = pd.read_excel(file, dtype={'行動電話': str})
+        if '行動電話' in df.columns:
+            # 使用 vectorized 操作替代 apply
+            mask = df['行動電話'].notna()
+            df.loc[mask, '行動電話'] = df.loc[mask, '行動電話'].str.zfill(10)
+        return df
+
+    def validate_columns(df):
+        """驗證必要欄位"""
+        required_base_columns = {'姓名', 'Email', '行動電話'}  # 使用 set 提高查找效率
+        missing_columns = required_base_columns - set(df.columns)
+        if missing_columns:
+            raise ValueError(f'缺少基本欄位：{", ".join(missing_columns)}')
+
+    def validate_activity_data(df, activity_type):
+        """驗證活動相關數據"""
+        if activity_type != 'both':
+            return None, None, None
+
+        # 使用字典存儲列名和數據狀態，減少重複計算
+        columns = {
+            'xiazai': find_matching_column(df, '祈福牌位'),
+            'chaojian': find_matching_column(df, ['超薦牌位', '超渡牌位']),
+            'gongde': find_matching_column(df, '功德主')
+        }
+
+        if not any(columns.values()):
+            raise ValueError('必須至少包含「祈福牌位」、「超薦牌位（或超渡牌位）」或「功德主」其中一個相關欄位')
+
+        # 一次性檢查所有欄位的數據
+        has_data = {
+            key: col is not None and df[col].notna().any()
+            for key, col in columns.items()
+        }
+
+        if not any(has_data.values()):
+            raise ValueError('必須至少填寫「祈福牌位」、「超薦牌位」或「功德主」其中一項資料')
+
+        return columns, has_data
+
     try:
         app.logger.info('開始處理上傳檔案')
 
-        # 初始化 response_data
-        response_data = {
-            'message': '處理完成',
-            'files': {}
-        }
+        # 確保輸出目錄存在
+        os.makedirs(Config.OUTPUT_DIR, exist_ok=True)
 
-        # 獲取活動類型
+        response_data = {'message': '處理完成', 'files': {}}
         activity_type = request.form.get('activityType', 'both')
-        app.logger.info(f'活動類型: {activity_type}')
 
-        if not os.path.exists(OUTPUT_DIR):
-            os.makedirs(OUTPUT_DIR)
-            app.logger.info('創建輸出目錄')
+        # 驗證並讀取文件
+        file = validate_file()
+        df = read_excel_file(file)
+        validate_columns(df)
 
-        if 'file' not in request.files:
-            app.logger.error('沒有檔案')
-            return jsonify({'error': '沒有檔案'}), 400
+        # 驗證活動數據
+        columns, has_data = validate_activity_data(df, activity_type)
 
-        file = request.files['file']
-        if file.filename == '':
-            app.logger.error('沒有選擇檔案')
-            return jsonify({'error': '沒有選擇檔案'}), 400
-
-        try:
-            app.logger.info('開始讀取 Excel 檔案')
-            df = pd.read_excel(file, dtype={'行動電話': str})
-            if '行動電話' in df.columns:
-                df['行動電話'] = df['行動電話'].apply(lambda x: str(x).zfill(10) if pd.notna(x) else '')
-            app.logger.info('Excel 檔案讀取完成')
-        except Exception as e:
-            app.logger.error(f'Excel 讀取失敗: {str(e)}')
-            return jsonify({'error': f'Excel 讀取失敗: {str(e)}'}), 500
-
-        # 檢查基本欄位
-        required_base_columns = ['姓名', 'Email', '行動電話']
-        missing_base_columns = [col for col in required_base_columns if col not in df.columns]
-        if missing_base_columns:
-            app.logger.error(f'缺少基本欄位：{", ".join(missing_base_columns)}')
-            return jsonify({'error': f'缺少基本欄位：{", ".join(missing_base_columns)}'}), 400
-
-        # 根據活動類型檢查必要欄位
+        # 處理法會相關文件
         if activity_type == 'both':
-            # 檢查是否至少有一個相關欄位（法會相關）
-            xiazai_col = find_matching_column(df, '祈福牌位')
-            chaojian_col = find_matching_column(df, ['超薦牌位', '超渡牌位'])
-            gongde_col = find_matching_column(df, '功德主')
-
-            if not any([xiazai_col, chaojian_col, gongde_col]):
-                error_msg = '必須至少包含「祈福牌位」、「超薦牌位（或超渡牌位）」或「功德主」其中一個相關欄位'
-                app.logger.error(error_msg)
-                return jsonify({'error': error_msg}), 400
-
-            # 檢查是否至少有一個欄位有資料
-            has_xiazai_data = xiazai_col is not None and df[xiazai_col].notna().any()
-            has_chaojian_data = chaojian_col is not None and df[chaojian_col].notna().any()
-            has_gongde_data = gongde_col is not None and df[gongde_col].notna().any()
-
-            if not (has_xiazai_data or has_chaojian_data or has_gongde_data):
-                error_msg = '必須至少填寫「祈福牌位」、「超薦牌位」或「功德主」其中一項資料'
-                app.logger.error(error_msg)
-                return jsonify({'error': error_msg}), 400
-
-            # 創建法會相關文件
             try:
-                app.logger.info('開始創建 Word 檔案')
-                file_paths, has_xiazai, has_chaojian, has_gongde = create_word_files(df)
-                app.logger.info('Word 檔案創建完成')
+                # 找到管理者註記事項欄位
+                note_column = find_matching_column(df, '管理者註記事項')
 
-                if has_xiazai:
-                    response_data['files']['xiazai'] = os.path.basename(file_paths['消災牌位'])
-                if has_chaojian:
-                    response_data['files']['chaojian'] = os.path.basename(file_paths['超薦牌位'])
-                if has_gongde:
-                    response_data['files']['gongde'] = os.path.basename(file_paths['功德主'])
+                # 創建一個包含所有必要數據的 DataFrame 視圖，避免重複訪問
+                relevant_columns = ['姓名', 'Email', '行動電話']
+
+                # 添加功能相關欄位
+                for col in columns.values():
+                    if col:
+                        relevant_columns.append(col)
+
+                # 添加管理者註記事項欄位
+                if note_column:
+                    relevant_columns.append(note_column)
+
+                # 確保欄位名稱不重複
+                relevant_columns = list(dict.fromkeys(relevant_columns))
+
+                # 建立工作用的 DataFrame
+                working_df = df[relevant_columns].copy()
+
+                # 建立 column_mapping（只在這裡處理一次）
+                column_mapping = {
+                    'xiazai': find_matching_column(working_df, '祈福牌位'),
+                    'chaojian': find_matching_column(working_df, ['超薦牌位', '超渡牌位']),
+                    'gongde': find_matching_column(working_df, '功德主'),
+                    'note': note_column
+                }
+
+                # 將 column_mapping 傳遞給 create_word_files
+                file_paths, has_xiazai, has_chaojian, has_gongde = create_word_files(working_df, column_mapping)
+
+                # 使用字典推導式簡化文件路徑處理
+                file_types = {
+                    'xiazai': '消災牌位',
+                    'chaojian': '超薦牌位',
+                    'gongde': '功德主'
+                }
+
+                for key, file_type in file_types.items():
+                    if has_data.get(key) and file_type in file_paths:
+                        response_data['files'][key] = os.path.basename(file_paths[file_type])
 
             except Exception as e:
                 app.logger.error(f'Word 檔案創建失敗: {str(e)}')
-                return jsonify({'error': f'Word 檔案創建失敗: {str(e)}'}), 500
+                raise
 
-        # 創建參加者名單（兩種活動類型都需要）
+        # 創建參加者名單
         try:
-            participant_excel = create_participant_excel(df)
-            if participant_excel:
+            if participant_excel := create_participant_excel(df):
                 response_data['files']['participant'] = os.path.basename(participant_excel)
         except Exception as e:
             app.logger.error(f'參加者名單 Excel 創建失敗: {str(e)}')
+            # 不中斷處理，繼續執行
 
-        app.logger.info('處理完成，返回結果')
+        app.logger.info('處理完成')
         return jsonify(response_data), 200
 
+    except ValueError as e:
+        app.logger.error(str(e))
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         app.logger.error(f'處理過程發生錯誤：{str(e)}')
         return jsonify({'error': str(e)}), 500
 
+
 @app.route('/download/<filename>')
 def download_file(filename):
     try:
-        if not os.path.exists(OUTPUT_DIR):
+        if not os.path.exists(Config.OUTPUT_DIR):
             return jsonify({'error': '輸出目錄不存在'}), 400
 
-        file_path = os.path.join(OUTPUT_DIR, filename)
+        file_path = os.path.join(Config.OUTPUT_DIR, filename)
         if not os.path.exists(file_path):
             return jsonify({'error': '檔案不存在'}), 404
 
