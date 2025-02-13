@@ -300,6 +300,19 @@ def create_participant_excel(df):
     """創建參加者 Excel 檔案"""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
+    # 預定義樣式（移到最前面）
+    styles = {
+        'title': Font(size=Config.FONT_SIZES['title'], name=Config.FONT_NAME),
+        'header': Font(size=Config.FONT_SIZES['header'], name=Config.FONT_NAME),
+        'content': Font(size=Config.FONT_SIZES['content'], name=Config.FONT_NAME),
+        'border': Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+    }
+
     # 找到相關欄位並驗證
     columns = {
         'number': find_matching_column(df, '項次'),
@@ -323,35 +336,24 @@ def create_participant_excel(df):
     ws = wb.active
     ws.title = "全程參加者名單"
 
-    # 預定義樣式
-    styles = {
-        'title': Font(size=Config.FONT_SIZES['title'], name=Config.FONT_NAME),
-        'header': Font(size=Config.FONT_SIZES['header'], name=Config.FONT_NAME),
-        'content': Font(size=Config.FONT_SIZES['content'], name=Config.FONT_NAME),
-        'border': Border(
-            left=Side(style='thin'),
-            right=Side(style='thin'),
-            top=Side(style='thin'),
-            bottom=Side(style='thin')
-        )
-    }
+    # 添加標題並設置格式
+    title_cell = ws.cell(row=1, column=1, value="標題：現場名單")
+    title_cell.font = styles['title']
+    ws.merge_cells('A1:E1')
+    title_cell.alignment = Alignment(horizontal='left', vertical='center')
+    title_cell.border = styles['border']  # 添加邊框
 
-    # 設置欄寬（單位：字符寬度）
-    ws.column_dimensions['A'].width = Config.COLUMN_WIDTHS['number']  # 項次
-    ws.column_dimensions['B'].width = Config.COLUMN_WIDTHS['name']    # 姓名
-    ws.column_dimensions['C'].width = Config.COLUMN_WIDTHS['book']    # 法本
-    ws.column_dimensions['D'].width = Config.COLUMN_WIDTHS['meal']    # 便當
-    ws.column_dimensions['E'].width = Config.COLUMN_WIDTHS['note']    # 備註
+    # 設置欄寬
+    ws.column_dimensions['A'].width = Config.COLUMN_WIDTHS['number']
+    ws.column_dimensions['B'].width = Config.COLUMN_WIDTHS['name']
+    ws.column_dimensions['C'].width = Config.COLUMN_WIDTHS['book']
+    ws.column_dimensions['D'].width = Config.COLUMN_WIDTHS['meal']
+    ws.column_dimensions['E'].width = Config.COLUMN_WIDTHS['note']
 
     # 設置列高
     ws.row_dimensions[1].height = Config.ROW_HEIGHTS['title']
     for row in range(2, len(participants) + 3):
         ws.row_dimensions[row].height = Config.ROW_HEIGHTS['content']
-
-    # 使用批量操作填充數據，從1開始編號
-    data = [[i] + [row[columns['name']], '', '',
-            row[columns['note']] if columns['note'] and pd.notna(row[columns['note']]) else '']
-            for i, (_, row) in enumerate(participants.iterrows(), 1)]  # 使用 enumerate 從1開始編號
 
     # 寫入表頭
     headers = ['項次', '姓名', '法本', '便當', '管理者註記事項']
@@ -361,11 +363,23 @@ def create_participant_excel(df):
         cell.border = styles['border']
         cell.alignment = Alignment(horizontal='center', vertical='center')
 
-    # 批量寫入數據
-    for row_idx, row_data in enumerate(data, 3):
-        for col_idx, value in enumerate(row_data, 1):
-            cell = ws.cell(row=row_idx, column=col_idx, value=value)
-            cell.font = styles['content']
+    # 準備並寫入數據
+    for row_idx, (_, row) in enumerate(participants.iterrows(), 3):
+        # 項次
+        ws.cell(row=row_idx, column=1, value=row_idx-2).font = styles['content']
+        # 姓名
+        ws.cell(row=row_idx, column=2, value=row[columns['name']]).font = styles['content']
+        # 法本（空白）
+        ws.cell(row=row_idx, column=3, value='').font = styles['content']
+        # 便當（空白）
+        ws.cell(row=row_idx, column=4, value='').font = styles['content']
+        # 備註
+        note_value = row[columns['note']] if columns['note'] and pd.notna(row[columns['note']]) else ''
+        ws.cell(row=row_idx, column=5, value=note_value).font = styles['content']
+
+        # 設置每個單元格的邊框和對齊方式
+        for col in range(1, 6):
+            cell = ws.cell(row=row_idx, column=col)
             cell.border = styles['border']
             cell.alignment = Alignment(horizontal='center', vertical='center')
 
