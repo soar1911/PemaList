@@ -139,7 +139,7 @@ def create_content_file(df, column_name, file_type, timestamp, is_landscape=Fals
 
     # 預處理內容，減少循環中的字符串操作
     valid_rows['content'] = valid_rows.apply(
-        lambda row: f"{prefix}{row['姓名']}{' | ' if prefix else '\t'}{str(row[column_name]).replace('\n', ' ')}",
+        lambda row: f"{prefix}{row['姓名']}{' | ' if prefix else chr(9)}{str(row[column_name]).replace('\n', ' ')}",
         axis=1
     )
 
